@@ -6,8 +6,13 @@ from .models import Rank, Card, Player
 
 
 def _fresh_deck() -> List[Card]:
-    # 4 масти * 13 рангов — масти не важны, только ранги (52 карты)
-    return [Card(rank=r) for r in Rank.all_ranks() for _ in range(4)]
+    # Всего 28 карт: 8K, 8Q, 8J, 4TR (джокеры/козыри)
+    deck: List[Card] = []
+    deck += [Card(rank=Rank.K) for _ in range(8)]
+    deck += [Card(rank=Rank.Q) for _ in range(8)]
+    deck += [Card(rank=Rank.J) for _ in range(8)]
+    deck += [Card(rank=Rank.TR) for _ in range(4)]
+    return deck
 
 
 @dataclass
@@ -28,6 +33,7 @@ class GameState:
     current_idx: int = 0  # индекс в self.players
     last_play: Optional[LastPlay] = None
     alive: Dict[int, bool] = field(default_factory=dict)
+    revolvers: Dict[int, int] = field(default_factory=dict)  # per-player remaining chambers (start 6)
 
     def reset(self):
         self.started = False
@@ -37,6 +43,7 @@ class GameState:
         self.current_idx = 0
         self.last_play = None
         self.alive = {p.user_id: True for p in self.players}
+        self.revolvers = {p.user_id: 6 for p in self.players}
 
     # --- Лобби ---
     def add_player(self, uid: int, username: str):
@@ -44,6 +51,7 @@ class GameState:
             return
         self.players.append(Player(uid, username or str(uid)))
         self.alive[uid] = True
+        self.revolvers[uid] = 6
 
     def remove_dead(self):
         self.players = [p for p in self.players if self.alive.get(p.user_id, False)]
@@ -57,6 +65,8 @@ class GameState:
         if len(self.players) < 2:
             raise ValueError("Нужно минимум 2 игрока.")
         self.reset()
+        if len(self.players) * 5 > len(self.deck):
+            raise ValueError("Максимум 6 игроков для этой колоды (28 карт по 5 на игрока).")
         # Перетасовка через secrets (криптоустойчивый рандом)
         deck = self.deck
         for i in range(len(deck) - 1, 0, -1):
@@ -66,7 +76,7 @@ class GameState:
         for p in self.players:
             self.hands[p.user_id] = [self.deck.pop() for _ in range(5)]
         # Тема
-        self.current_topic = secrets.choice(Rank.all_ranks())
+        self.current_topic = secrets.choice([Rank.K, Rank.Q, Rank.J])
         # Стартовый игрок
         self.current_idx = secrets.randbelow(len(self.players))
         self.started = True
@@ -80,9 +90,45 @@ class GameState:
             self.hands[uid] = [self.deck.pop() for _ in range(to_draw)]
             # при новой фазе добора можно обновить тему
             if self.current_topic is None:
-                self.current_topic = secrets.choice(Rank.all_ranks())
+                self.current_topic = secrets.choice([Rank.K, Rank.Q, Rank.J])
 
     # --- Ход и обвинение ---
+    def _topup_player_to_five(self, uid: int) -> None:
+        """Добрать карты этому игроку до 5, если в колоде есть карты."""
+        hand = self.hands.setdefault(uid, [])
+        while len(hand) < 5 and self.deck:
+            hand.append(self.deck.pop())
+
+    def _topup_alive_to_five(self) -> None:
+        """Добрать всем живым игрокам до 5 карт (по порядку списка игроков)."""
+        for p in self.players:
+            if self.alive.get(p.user_id, False):
+                self._topup_player_to_five(p.user_id)
+
+    def _redeal_alive_to_five(self, last_play_rank: Optional[Rank] = None) -> None:
+        """Полная замена рук: собрать все карты обратно в колоду, перемешать и раздать по 5 живым."""
+        # Собрать все карты из рук в колоду
+        for uid, hand in list(self.hands.items()):
+            if hand:
+                self.deck.extend(hand)
+                self.hands[uid] = []
+        # Вернуть последнюю сыгранную карту в колоду (если есть)
+        if last_play_rank is not None:
+            self.deck.append(Card(rank=last_play_rank))
+        # Перетасовать колоду
+        deck = self.deck
+        for i in range(len(deck) - 1, 0, -1):
+            j = secrets.randbelow(i + 1)
+            deck[i], deck[j] = deck[j], deck[i]
+        # Раздать по 5 живым игрокам
+        for p in self.players:
+            if self.alive.get(p.user_id, False):
+                self.hands[p.user_id] = []
+                for _ in range(5):
+                    if not self.deck:
+                        break
+                    self.hands[p.user_id].append(self.deck.pop())
+
     def current_player(self) -> Player:
         return self.players[self.current_idx]
 
@@ -126,19 +172,37 @@ class GameState:
             raise ValueError("Обвинять может только следующий игрок по очереди.")
 
         lp = self.last_play
-        liar_caught = (lp.actual_rank != lp.claimed_rank)
-        punished_uid = lp.player_id if liar_caught else accuser_uid
+        # Особое правило темы: если фактическая карта совпадает с темой,
+        # наказание получает обвинитель (стреляет в себя)
+        if self.current_topic is not None and lp.actual_rank == self.current_topic:
+            liar_caught = False
+            punished_uid = accuser_uid
+        else:
+            liar_caught = (lp.actual_rank != lp.claimed_rank)
+            punished_uid = lp.player_id if liar_caught else accuser_uid
 
-        # Русская рулетка: шанс 1/6
-        bullet = secrets.randbelow(6) == 0
+        # Русская рулетка: индивидуальный барабан на игрока (1/6 → 1/5 → ... → 1/1)
+        remaining = self.revolvers.get(punished_uid, 6)
+        if remaining < 1:
+            remaining = 1
+        bullet = secrets.randbelow(remaining) == 0
         died_uid: Optional[int] = None
         if bullet:
             self.alive[punished_uid] = False
             died_uid = punished_uid
+            # Перезарядим барабан наказанного (если он выжил бы в будущем)
+            self.revolvers[punished_uid] = 6
             self.remove_dead()
+        else:
+            # Щелчок — шанс для этого игрока повышается
+            next_remaining = max(1, remaining - 1)
+            self.revolvers[punished_uid] = next_remaining
 
         # После обвинения «вскрылись» — сбрасываем last_play
         self.last_play = None
+
+        # После обвинения полностью меняем руки: возвращаем все карты в колоду, тасуем и раздаём по 5 живым
+        self._redeal_alive_to_five(last_play_rank=lp.actual_rank)
 
         # Проверка конца игры
         alive_players = [p for p in self.players if self.alive.get(p.user_id, False)]
@@ -156,7 +220,9 @@ class GameState:
         if bullet:
             msg += f"\n🔫 Русская рулетка: @{self._name(punished_uid)} не выжил."
         else:
-            msg += f"\n🔫 Русская рулетка: щелчок... повезло @{self._name(punished_uid)}!"
+            nxt = self.revolvers.get(punished_uid, 6)
+            hint = f"1/{nxt}" if nxt > 1 else "1/1"
+            msg += f"\n🔫 Русская рулетка: щелчок... повезло @{self._name(punished_uid)}! (следующий шанс {hint})"
 
         msg += winner_text
         return msg, bullet, died_uid
@@ -184,3 +250,15 @@ class GameState:
         if not cards:
             return "Рука пуста."
         return "Ваша рука:\n" + "\n".join([f"{i}: {c.rank}" for i, c in enumerate(cards)])
+
+    def stop(self) -> str:
+        """Принудительно завершить игру."""
+        self.started = False
+        self.deck = []
+        self.hands.clear()
+        self.current_topic = None
+        self.current_idx = 0
+        self.last_play = None
+        self.alive.clear()
+        self.revolvers.clear()
+        return "❌ Игра остановлена администратором."

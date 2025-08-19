@@ -54,8 +54,8 @@ class GameState:
     def start(self):
         if self.started:
             raise ValueError("Игра уже начата.")
-        if len(self.players) < 3:
-            raise ValueError("Нужно минимум 3 игрока.")
+        if len(self.players) < 2:
+            raise ValueError("Нужно минимум 2 игрока.")
         self.reset()
         # Перетасовка через secrets (криптоустойчивый рандом)
         deck = self.deck

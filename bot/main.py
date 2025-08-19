@@ -332,7 +332,16 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(gs.status())
 
 
+
 async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not in_group(update):
+        return await update.effective_message.reply_text("Тема актуальна для групповой игры.")
+    gs = GAMES.get(update.effective_chat.id)
+    if not gs or not gs.current_topic:
+        return await update.effective_message.reply_text("Тема пока не установлена.")
+    await update.effective_message.reply_text(f"Текущая тема: {gs.current_topic.value}")
+
+
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not in_group(update):
         return await update.effective_message.reply_text("Останавливать игру нужно в группе.")
@@ -342,12 +351,6 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.effective_message.reply_text("Нет активной игры.")
     msg = gs.stop()
     await update.effective_message.reply_text(msg)
-    if not in_group(update):
-        return await update.effective_message.reply_text("Тема актуальна для групповой игры.")
-    gs = GAMES.get(update.effective_chat.id)
-    if not gs or not gs.current_topic:
-        return await update.effective_message.reply_text("Тема пока не установлена.")
-    await update.effective_message.reply_text(f"Текущая тема: {gs.current_topic.value}")
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):

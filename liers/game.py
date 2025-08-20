@@ -66,7 +66,7 @@ class GameState:
             raise ValueError("Нужно минимум 2 игрока.")
         self.reset()
         if len(self.players) * 5 > len(self.deck):
-            raise ValueError("Максимум 6 игроков для этой колоды (28 карт по 5 на игрока).")
+            raise ValueError("Максимум 5 игроков для этой колоды (28 карт по 5 на игрока).")
         # Перетасовка через secrets (криптоустойчивый рандом)
         deck = self.deck
         for i in range(len(deck) - 1, 0, -1):
@@ -200,6 +200,7 @@ class GameState:
 
         # После обвинения «вскрылись» — сбрасываем last_play
         self.last_play = None
+        self.current_topic = secrets.choice([Rank.K, Rank.Q, Rank.J])
 
         # После обвинения полностью меняем руки: возвращаем все карты в колоду, тасуем и раздаём по 5 живым
         self._redeal_alive_to_five(last_play_rank=lp.actual_rank)
@@ -236,14 +237,18 @@ class GameState:
     def status(self) -> str:
         if not self.players:
             return "Лобби пустое. Используйте /join."
-        alive_marks = {uid: ("🟢" if self.alive.get(uid, False) else "⚫️") for uid in self.alive}
-        order = " → ".join([f"@{p.username}{alive_marks.get(p.user_id,'')}" for p in self.players])
+        alive_marks = {uid: ("Жив(а)" if self.alive.get(uid, False) else "Выбыл(а)") for uid in self.alive}
+        order = " → ".join([f"@{p.username}({alive_marks.get(p.user_id,'')})" for p in self.players])
         cur = self.current_player().username if self.started else "—"
         topic = self.current_topic.value if self.current_topic else "—"
         pending = ""
         if self.last_play:
             pending = f"\nПоследний ход: @{self._name(self.last_play.player_id)} заявил {self.last_play.claimed_rank} (карта скрыта)."
-        return f"Игроки: {order}\nТема: {topic}\nХод: @{cur}{pending}"
+        # вероятность для текущего игрока
+        cur_uid = self.current_player().user_id if self.started else None
+        odds = self.revolvers.get(cur_uid, 6) if cur_uid is not None else None
+        odds_line = f"\nШанс текущего игрока: 1/{odds}" if odds else ""
+        return f"Игроки: {order}\nТема: {topic}\nХод: @{cur}{pending}{odds_line}"
 
     def hand_str(self, uid: int) -> str:
         cards = self.hands.get(uid, [])

@@ -306,21 +306,21 @@ async def cmd_accuse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError as e:
         return await update.effective_message.reply_text(f"Нельзя: {e}")
 
-    await update.effective_message.reply_text(msg)
-    # обновим руки всем, кого это затронуло
-    affected = set([uid])
-    if died_uid:
-        affected.add(died_uid)
+    # Показать новую тему после обвинения
+    await update.effective_message.reply_text(msg + f"\nНовая тема: {gs.current_topic.value}")
+
+    # Разослать новые руки всем живым игрокам (после полного редила в accuse)
     if gs.started:
-        # также последнему, кто клал карту
-        # (после accuse last_play уже None — не узнаем, кого именно; пропустим)
-        pass
-    for p in gs.players:
-        if p.user_id in affected:
-            try:
-                await _send_hand_dm(context, p.user_id, gs.hand_str(p.user_id))
-            except Exception:
-                pass
+        for p in gs.players:
+            if gs.alive.get(p.user_id, False):
+                try:
+                    await _send_hand_dm(
+                        context,
+                        p.user_id,
+                        f"Группа {chat_id}. Тема: {gs.current_topic.value}\n{gs.hand_str(p.user_id)}",
+                    )
+                except Exception:
+                    pass
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -363,6 +363,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/accuse — обвинить предыдущего игрока (может только следующий по ходу)\n"
         "/status — текущее состояние\n"
         "/topic — текущая тема\n"
+        "/stop — завершить текущую игру\n"
         "\nDealer (в личке):\n"
         "/dealer_new — создать Dealer\n"
         "/dealer_add <имя> — добавить игрока\n"

@@ -33,3 +33,5 @@ if __name__ == "__main__":
         webhook_url=webhook_url,
         # drop_pending_updates=True,  # включи при необходимости
     )
+
+#webhook_url

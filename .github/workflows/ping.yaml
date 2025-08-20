@@ -1,0 +1,15 @@
+name: keep-alive
+on:
+  schedule:
+    - cron: "*/13 * * * *"   # каждые 14 минут (UTC)
+  workflow_dispatch: {}       # можно запустить вручную
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render root
+        run: |
+          set -e
+          # достаточно HEAD-запроса; даже 404 «будит» сервис
+          curl -I --max-time 15 "${{ secrets.RENDER_PING_URL }}" || true

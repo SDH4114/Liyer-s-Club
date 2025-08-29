@@ -1,7 +1,7 @@
 name: keep-alive
 on:
   schedule:
-    - cron: "*/5 * * * *"   # каждые 10 минут (UTC)
+    - cron: "*/7 * * * *"   # каждые 7 минут (UTC)
   workflow_dispatch: {}       # можно запустить вручную
 
 jobs:
